@@ -1,0 +1,70 @@
+{
+  "name": "git-branch-pruner",
+  "displayName": "Git Branch Pruner",
+  "description": "Visually manage and clean up local Git branches that are no longer needed",
+  "version": "0.1.0",
+  "publisher": "your-publisher-name",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "keywords": [
+    "git",
+    "branch",
+    "clean",
+    "prune",
+    "manage"
+  ],
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/monkeykjy/git-branch-pruner"
+  },
+  "bugs": {
+    "url": "https://github.com/monkeykjy/git-branch-pruner/issues"
+  },
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gitBranchPruner",
+          "title": "Git Branch Pruner",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "gitBranchPruner": [
+        {
+          "type": "webview",
+          "id": "branchPrunerView",
+          "name": "Branch Manager",
+          "icon": "media/icon.svg"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch:tsc": "tsc -watch -p ./",
+    "watch:esbuild": "ts-node ./esbuild.ts --watch",
+    "watch": "pnpm run watch:esbuild",
+    "pretest": "pnpm run compile",
+    "test": "vscode-test",
+    "build:esbuild": "ts-node ./esbuild.ts"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.1",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/test-cli": "^0.0.4",
+    "esbuild": "^0.20.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  }
+}
