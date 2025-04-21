@@ -3,7 +3,7 @@
   "displayName": "Git Branch Pruner",
   "description": "Visually manage and clean up local Git branches that are no longer needed",
   "version": "0.1.0",
-  "publisher": "your-publisher-name",
+  "publisher": "mk",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -56,7 +56,10 @@
     "watch": "pnpm run watch:esbuild",
     "pretest": "pnpm run compile",
     "test": "vscode-test",
-    "build:esbuild": "ts-node ./esbuild.ts"
+    "build:esbuild": "ts-node ./esbuild.ts",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "convert-icon": "node scripts/convert-icon.js"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.1",
@@ -64,6 +67,7 @@
     "@types/vscode": "^1.80.0",
     "@vscode/test-cli": "^0.0.4",
     "esbuild": "^0.20.0",
+    "sharp": "^0.34.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.0.0"
   }
