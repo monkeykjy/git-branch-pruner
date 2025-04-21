@@ -3,7 +3,7 @@
   "displayName": "Git Branch Pruner",
   "description": "Visually manage and clean up local Git branches that are no longer needed",
   "version": "0.1.0",
-  "publisher": "mk",
+  "publisher": "monkeykjy",
   "engines": {
     "vscode": "^1.80.0"
   },
