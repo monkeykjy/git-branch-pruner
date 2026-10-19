@@ -55,10 +55,13 @@
     "watch:esbuild": "ts-node ./esbuild.ts --watch",
     "watch": "pnpm run watch:esbuild",
     "pretest": "pnpm run compile",
-    "test": "vscode-test",
+    "test": "node --test out/src/test/unit/*.test.js",
+    "pretest:integration": "pnpm run compile && pnpm run build:esbuild",
+    "test:integration": "vscode-test",
     "build:esbuild": "ts-node ./esbuild.ts",
     "package": "vsce package",
     "publish": "vsce publish",
+    "demo": "node scripts/create-demo.js",
     "convert-icon": "node scripts/convert-icon.js"
   },
   "devDependencies": {
@@ -66,6 +69,7 @@
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.80.0",
     "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.20.0",
     "sharp": "^0.34.1",
     "ts-node": "^10.9.2",

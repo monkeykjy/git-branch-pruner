@@ -7,6 +7,7 @@ import { BranchPrunerViewProvider } from './providers/BranchPrunerViewProvider';
  */
 export function activate(context: vscode.ExtensionContext) {
   const provider = new BranchPrunerViewProvider(context.extensionUri);
+  context.subscriptions.push(provider);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('branchPrunerView', provider));
 }
 
