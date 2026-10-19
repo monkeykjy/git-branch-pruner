@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Localize the extension description and local-branch view title for Simplified Chinese, with English defaults. Reorganize both READMEs with language-switching instructions and six screenshots rendered from the current Webview using demo data.
+
 - End fetch progress immediately and show the following local refresh separately, keeping actions disabled until it finishes. Prevent late local-read callbacks from recreating disposed log channels or writing into a reopened view.
 
 - Remove the duplicate remote-fetch progress notification; keep progress, cancellation and outcomes in the sidebar.

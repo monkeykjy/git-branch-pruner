@@ -1,0 +1,4 @@
+{
+  "extension.description": "查看本地 Git 分支状态，安全清理不再需要的分支。",
+  "view.name": "本地分支"
+}

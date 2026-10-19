@@ -1,0 +1,4 @@
+{
+  "extension.description": "Review local Git branch status and safely clean up branches you no longer need.",
+  "view.name": "Local Branches"
+}

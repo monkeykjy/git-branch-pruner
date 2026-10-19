@@ -1,7 +1,7 @@
 {
   "name": "git-branch-pruner",
   "displayName": "Git Branch Pruner",
-  "description": "Visually manage and clean up local Git branches that are no longer needed",
+  "description": "%extension.description%",
   "version": "0.1.1",
   "publisher": "monkeykjy",
   "engines": {
@@ -43,7 +43,7 @@
         {
           "type": "webview",
           "id": "branchPrunerView",
-          "name": "Branch Manager",
+          "name": "%view.name%",
           "icon": "media/icon.svg"
         }
       ]
