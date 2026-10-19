@@ -11,6 +11,9 @@ const root = fs.mkdtempSync(path.join(demoDirectory, 'run-'));
 const repository = path.join(root, 'repository');
 const peer = path.join(root, 'peer');
 const remote = path.join(root, 'remote.git');
+// Optional macOS/Linux fixture: enable with remote.origin.uploadpack in this demo only.
+const slowUploadPack = path.join(root, 'slow-upload-pack.sh');
+fs.writeFileSync(slowUploadPack, '#!/bin/sh\ncase "$1" in 8|35) ;; *) exit 1 ;; esac\nsleep "$1"\nshift\nexec git-upload-pack "$@"\n');
 const env = { ...process.env };
 for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key];
 Object.assign(env, {
@@ -52,3 +55,4 @@ git(repository, 'remote', 'set-head', 'origin', 'main');
 git(remote, 'update-ref', '-d', 'refs/heads/feature/gone');
 console.log(JSON.stringify({ repository, peer, remote }, null, 2));
 console.log('仅使用本地临时仓库；在扩展开发宿主中打开 repository。测试步骤见 docs/005.MANUAL_TESTS.md。');
+console.log('macOS 慢速获取：在 repository 执行 git config remote.origin.uploadpack "sh ../slow-upload-pack.sh 8"。恢复：git config --unset remote.origin.uploadpack。');

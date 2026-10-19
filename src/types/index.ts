@@ -18,8 +18,13 @@ export interface DeleteResult {
   status: DeleteStatus;
 }
 
+export interface RemoteProgress {
+  startedAt: number;
+  cancelling: boolean;
+}
+
 export type WebviewMessage =
-  | { type: 'refresh' | 'fetch' | 'ready' }
+  | { type: 'refresh' | 'fetch' | 'cancelFetch' | 'ready' }
   | { type: 'switch'; branch: string }
   | { type: 'confirmDelete'; branches: string[]; force: boolean };
 
@@ -28,7 +33,7 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | undefined 
     return undefined;
   }
   const message = value as Record<string, unknown>;
-  if (message.type === 'refresh' || message.type === 'fetch' || message.type === 'ready') {
+  if (message.type === 'refresh' || message.type === 'fetch' || message.type === 'cancelFetch' || message.type === 'ready') {
     return { type: message.type };
   }
   if (message.type === 'switch' && typeof message.branch === 'string' && message.branch && !message.branch.includes('\0')) {

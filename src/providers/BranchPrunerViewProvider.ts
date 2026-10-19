@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import { GitService } from '../services/GitService';
 import { GitCommandError } from '../services/GitRunner';
 import { RepositoryWatcher } from '../services/RepositoryWatcher';
-import { Branch, DeleteResult, parseWebviewMessage } from '../types';
+import { Branch, DeleteResult, RemoteProgress, parseWebviewMessage } from '../types';
+import { getDeleteConfirmation } from '../views/deleteConfirmation';
 import { getErrorContent, getBranchListBody, getBranchListContent, getLoadingContent } from '../views/webview';
 
 const LOCAL_READ_TIMEOUT_MS = 15_000;
@@ -22,14 +23,17 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
   private branches: Branch[] = [];
   private results: DeleteResult[] = [];
   private notice = '';
+  private remoteNotice = '';
   private watcherNotice = '';
   private readNotice = '';
   private hasList = false;
   private ready = false;
   private busy = false;
+  private refreshingLocal = false;
   private dirty = false;
   private reading?: Promise<void>;
   private fetchController?: AbortController;
+  private remoteProgress?: RemoteProgress;
   private localReadController?: AbortController;
   private logOutput?: vscode.OutputChannel;
   private generation = 0;
@@ -38,7 +42,8 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
   constructor(private readonly extensionUri: vscode.Uri, private readonly gitService = new GitService()) {}
   private t(cn: string, en: string): string { return this.chinese ? cn : en; }
 
-  private log(message: string): void {
+  private log(message: string, generation = this.generation): void {
+    if (!this.view || generation !== this.generation) return;
     if (!this.logOutput) this.logOutput = vscode.window.createOutputChannel('Git Branch Pruner');
     this.logOutput.appendLine(`[${new Date().toISOString()}] ${message}`);
   }
@@ -46,6 +51,7 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
   public dispose(): void {
     this.generation++;
     this.fetchController?.abort();
+    this.remoteProgress = undefined;
     this.localReadController?.abort();
     this.watcher?.dispose();
     this.watcher = undefined;
@@ -58,6 +64,7 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
     this.ready = false;
     this.hasList = false;
     this.busy = false;
+    this.refreshingLocal = false;
   }
 
   public async resolveWebviewView(view: vscode.WebviewView): Promise<void> {
@@ -72,6 +79,7 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
         const message = parseWebviewMessage(data);
         if (!message) return;
         if (message.type === 'ready') { this.ready = true; this.render(); return; }
+        if (message.type === 'cancelFetch') { this.cancelRemote(); return; }
         if (message.type === 'refresh') { await this.requestRefresh(); this.render(); return; }
         if (this.busy) return;
         this.busy = true;
@@ -85,9 +93,17 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
           this.notice = this.t('操作失败，请刷新本地状态后重试。', 'Operation failed. Refresh local state and retry.');
         } finally {
           if (generation !== this.generation) return;
-          this.busy = false;
-          await this.requestRefresh();
+          this.refreshingLocal = true;
           this.render();
+          try {
+            await this.requestRefresh();
+          } finally {
+            if (generation === this.generation) {
+              this.refreshingLocal = false;
+              this.busy = false;
+              this.render();
+            }
+          }
         }
       }),
       view.onDidDispose(() => this.dispose()),
@@ -114,6 +130,7 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
 
   private async readLocal(): Promise<void> {
     const generation = this.generation;
+    const log = (message: string) => this.log(message, generation);
     const controller = new AbortController();
     this.localReadController = controller;
     const started = Date.now();
@@ -124,16 +141,16 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
         reject(new LocalReadTimeoutError());
       }, LOCAL_READ_TIMEOUT_MS);
     });
-    this.log(`local-read:start platform=${process.platform} initial=${!this.hasList}`);
+    log(`local-read:start platform=${process.platform} initial=${!this.hasList}`);
     try {
       await Promise.race([this.readLocalAttempt(generation, controller.signal), timeout]);
-      this.log(`local-read:success elapsedMs=${Date.now() - started}`);
+      log(`local-read:success elapsedMs=${Date.now() - started}`);
     } catch (error) {
       const timedOut = error instanceof LocalReadTimeoutError ||
         (error instanceof GitCommandError && error.reason === 'timeout');
-      if (timedOut) this.log(`local-read:timeout elapsedMs=${Date.now() - started}`);
-      else if (error instanceof GitCommandError) this.log(`local-read:git-error code=${String(error.code)} reason=${error.reason}`);
-      else this.log(`local-read:error type=${error instanceof Error ? error.name : 'unknown'}`);
+      if (timedOut) log(`local-read:timeout elapsedMs=${Date.now() - started}`);
+      else if (error instanceof GitCommandError) log(`local-read:git-error code=${String(error.code)} reason=${error.reason}`);
+      else log(`local-read:error type=${error instanceof Error ? error.name : 'unknown'}`);
       if (generation !== this.generation || !this.view) return;
       if (this.hasList) {
         this.readNotice = timedOut
@@ -158,6 +175,7 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
   }
 
   private async readLocalAttempt(generation: number, signal: AbortSignal): Promise<void> {
+    const log = (message: string) => this.log(message, generation);
     const checkCancelled = () => {
       if (signal.aborted) throw new LocalReadTimeoutError();
     };
@@ -172,44 +190,47 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
       this.directory = undefined;
       this.readNotice = '';
       this.notice = '';
+      this.remoteNotice = '';
       this.watcherNotice = '';
       this.fetchController?.abort();
+      this.remoteProgress = undefined;
       if (!cwd) throw new Error(this.t('请先打开一个 Git 项目文件夹。', 'Open a Git project folder first.'));
       checkCancelled();
-      this.log('local-read:phase=repository-check:start');
+      log('local-read:phase=repository-check:start');
       if (!(await this.gitService.isGitRepository(cwd, { signal }))) {
         throw new Error(this.t('未找到 Git 工作仓库，请检查文件夹与 Git 安装。', 'No Git working repository found. Check the folder and Git installation.'));
       }
-      this.log('local-read:phase=repository-check:done');
+      log('local-read:phase=repository-check:done');
       checkCancelled();
-      this.log('local-read:phase=git-directories:start');
+      log('local-read:phase=git-directories:start');
       const directories = await this.gitService.getGitDirectories(cwd, { signal });
-      this.log('local-read:phase=git-directories:done');
+      log('local-read:phase=git-directories:done');
       if (generation !== this.generation) return;
       checkCancelled();
       this.directory = cwd;
       const watcher = new RepositoryWatcher(directories, () => { void this.requestRefresh(); }, () => {
-        this.log('watcher:error');
+        if (generation !== this.generation || !this.view) return;
+        log('watcher:error');
         this.watcherNotice = this.t('自动监听不可用，可点击“刷新本地”。', 'Automatic watching is unavailable; use Refresh local.');
         this.render();
       });
-      this.log('local-read:phase=watcher-start:start');
+      log('local-read:phase=watcher-start:start');
       try {
         await watcher.start(signal);
         checkCancelled();
         this.watcher = watcher;
-        this.log('local-read:phase=watcher-start:done');
+        log('local-read:phase=watcher-start:done');
       } catch {
         watcher.dispose();
         if (signal.aborted) throw new LocalReadTimeoutError();
-        this.log('watcher:start-error');
+        log('watcher:start-error');
         this.watcherNotice = this.t('自动监听不可用，可点击“刷新本地”。', 'Automatic watching is unavailable; use Refresh local.');
       }
     }
     checkCancelled();
-    this.log('local-read:phase=branches:start');
+    log('local-read:phase=branches:start');
     const branches = await this.gitService.getBranches(cwd, { signal });
-    this.log(`local-read:phase=branches:done count=${branches.length}`);
+    log(`local-read:phase=branches:done count=${branches.length}`);
     if (generation !== this.generation) return;
     checkCancelled();
     this.branches = branches;
@@ -219,51 +240,61 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
 
   private render(): void {
     if (!this.view || !this.directory) return;
-    const notice = [this.notice, this.readNotice, this.watcherNotice].filter(Boolean).join(' ');
+    const notice = [this.remoteNotice, this.notice, this.readNotice, this.watcherNotice].filter(Boolean).join(' ');
     if (!this.hasList) {
       this.hasList = true;
       this.ready = false;
-      this.view.webview.html = getBranchListContent(this.branches, this.chinese, this.results, notice, this.directory);
+      this.view.webview.html = getBranchListContent(this.branches, this.chinese, this.results, notice, this.directory, this.remoteProgress, this.refreshingLocal);
     } else if (this.ready) {
       void this.view.webview.postMessage({
         type: 'updateBranches', repository: this.directory, busy: this.busy,
-        content: getBranchListBody(this.branches, this.chinese, this.results, notice),
+        content: getBranchListBody(this.branches, this.chinese, this.results, notice, this.remoteProgress, this.refreshingLocal),
       });
     }
+  }
+
+  private cancelRemote(): void {
+    if (!this.fetchController || this.fetchController.signal.aborted) return;
+    if (this.remoteProgress) this.remoteProgress.cancelling = true;
+    this.fetchController.abort();
+    this.render();
   }
 
   private async updateRemote(): Promise<void> {
     const cwd = this.directory;
     if (!cwd) return;
+    const generation = this.generation;
     const started = Date.now();
     this.log('remote-update:start');
     const controller = new AbortController();
     this.fetchController = controller;
-    this.notice = this.t('正在更新远端状态，当前显示本地缓存…', 'Updating remote status; showing locally cached refs…');
+    this.remoteProgress = { startedAt: started, cancelling: false };
+    this.remoteNotice = '';
     this.render();
     try {
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: this.t('更新远端状态', 'Update remote status'), cancellable: true,
-      }, async (_progress, token) => {
-        const subscription = token.onCancellationRequested(() => controller.abort());
-        if (token.isCancellationRequested) controller.abort();
-        try { await this.gitService.fetchRemote(cwd, controller.signal); } finally { subscription.dispose(); }
-      });
-      if (this.directory === cwd) this.notice = this.t('上次手动更新远端成功：', 'Last successful manual remote update: ') + new Date().toLocaleTimeString();
+      await this.gitService.fetchRemote(cwd, controller.signal);
+      if (generation !== this.generation || this.directory !== cwd) return;
+      this.remoteNotice = this.t('本次会话上次手动 fetch 完成：', 'Last manual fetch completed in this session: ') +
+        new Date().toLocaleString(this.chinese ? 'zh-CN' : 'en-US') +
+        this.t('。获取范围遵循 Git 配置，列表仍基于本地引用。', '. Fetch scope follows Git configuration; the list still uses local refs.');
       this.log(`remote-update:success elapsedMs=${Date.now() - started}`);
     } catch (error) {
-      if (this.directory !== cwd) return;
+      if (generation !== this.generation || this.directory !== cwd) return;
       const reason = error instanceof GitCommandError ? error.reason : 'failed';
       this.log(`remote-update:error reason=${reason} elapsedMs=${Date.now() - started}`);
-      this.notice = reason === 'cancelled'
-        ? this.t('远端更新已取消，显示已获取的本地引用。', 'Remote update cancelled; showing locally available refs.')
+      this.remoteNotice = reason === 'cancelled'
+        ? this.t('远端更新已取消。', 'Remote update cancelled.')
         : reason === 'timeout'
-          ? this.t('远端更新超时，显示本地缓存。', 'Remote update timed out; showing cached refs.')
-          : this.t('远端更新失败，显示本地缓存；请检查网络、Git 代理或认证。', 'Remote update failed; showing cached refs. Check connectivity, Git proxy or authentication.');
+          ? this.t('远端更新超时。', 'Remote update timed out.')
+          : this.t('远端更新失败，请检查网络、Git 代理或认证。', 'Remote update failed. Check connectivity, Git proxy or authentication.');
+      this.remoteNotice += this.t(' 显示本地引用；部分引用可能已更新，不能确认所有远端状态。',
+        ' Showing local refs; some may have updated. Not all remote states could be confirmed.');
     } finally {
-      if (this.fetchController === controller) this.fetchController = undefined;
-      this.log('remote-update:end');
+      if (this.fetchController === controller) {
+        this.fetchController = undefined;
+        this.remoteProgress = undefined;
+      }
+      if (generation === this.generation && this.view) this.log('remote-update:end');
     }
   }
 
@@ -279,16 +310,10 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
   private async confirmAndDeleteBranches(branchNames: string[], force: boolean): Promise<void> {
     const cwd = this.directory;
     if (!cwd) return;
-    const button = force ? this.t('强制删除分支', 'Force delete branches') : this.t('删除分支', 'Delete branches');
-    const title = force
-      ? this.t(`强制删除这 ${branchNames.length} 个本地分支？`, `Force delete these ${branchNames.length} local branches?`)
-      : this.t(`删除这 ${branchNames.length} 个本地分支？`, `Delete these ${branchNames.length} local branches?`);
-    const explanation = force
-      ? this.t('将跳过未合并检查，可能丢失指向未合并提交的分支引用。受保护分支仍会保留。', 'This skips the merge check and may remove branch references to unmerged commits. Protected branches are still kept.')
-      : this.t('尚未合并的分支会保留。Git 根据上游或 HEAD 检查合并状态，不代表已合并到主分支。', 'Unmerged branches are kept. Git checks against upstream or HEAD, which does not necessarily mean merged into the default branch.');
+    const { title, detail, button } = getDeleteConfirmation(cwd, branchNames, force, this.chinese);
     const confirmed = await vscode.window.showWarningMessage(title, {
       modal: true,
-      detail: `${cwd}\n\n${branchNames.join('\n')}\n\n${explanation}\n\n${this.t('只删除本地分支，不删除远程分支。', 'Only local branches are deleted. Remote branches are unaffected.')}`,
+      detail,
     }, button);
     if (confirmed !== button) return;
     const results = await this.gitService.deleteBranches(cwd, branchNames, force);

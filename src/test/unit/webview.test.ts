@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { Branch, parseWebviewMessage } from '../../types';
 import { getBranchListContent, getErrorContent, getLoadingContent } from '../../views/webview';
+import { getDeleteConfirmation } from '../../views/deleteConfirmation';
 
 const branch: Branch = {
   name: 'topic/<b>"quoted"&demo</b>', isLocal: true, exists: { local: true, remote: false },
@@ -35,6 +36,7 @@ it('rejects malformed deletion messages and requires an explicit boolean force m
   }
   assert.deepEqual(parseWebviewMessage({ type: 'confirmDelete', branches: ['a', 'a'], force: false }),
     { type: 'confirmDelete', branches: ['a'], force: false });
+  assert.deepEqual(parseWebviewMessage({ type: 'cancelFetch' }), { type: 'cancelFetch' });
 });
 
 it('selection and scroll survive automatic refresh, and controls distinguish local refresh from fetch', () => {
@@ -57,6 +59,11 @@ it('selection and scroll survive automatic refresh, and controls distinguish loc
   const all = element({}, 'selectAll');
   const search = element({}, 'search');
   const content = element({ repository: '/repo' }, 'content');
+  const cancel = element({}, 'cancelFetchBtn');
+  const elapsed = { ...element({ started: '1000', prefix: 'Elapsed ', suffix: ' s' }, 'fetchElapsed'), textContent: '' };
+  let showProgress = false;
+  let now = 3000;
+  let timer: (() => void) | undefined;
   const messages: unknown[] = [];
   const listeners: Record<string, Listener> = {};
   const windowListeners: Record<string, Listener> = {};
@@ -65,6 +72,9 @@ it('selection and scroll survive automatic refresh, and controls distinguish loc
   const html = getBranchListContent([branch], false);
   const script = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)![1];
   runInNewContext(script, {
+    Date: { now: () => now },
+    setInterval: (tick: () => void) => { timer = tick; return 1; },
+    clearInterval: () => { timer = undefined; },
     acquireVsCodeApi: () => ({
       postMessage: (message: unknown) => messages.push(JSON.parse(JSON.stringify(message))),
       getState: () => undefined, setState: (state: unknown) => { saved = state; },
@@ -75,9 +85,9 @@ it('selection and scroll survive automatic refresh, and controls distinguish loc
     },
     document: {
       addEventListener: (name: string, listener: Listener) => { listeners[name] = listener; },
-      getElementById: (id: string) => [refresh, fetch, all, search, content].find(item => item.id === id),
+      getElementById: (id: string) => [refresh, fetch, all, search, content, ...(showProgress ? [elapsed, cancel] : [])].find(item => item.id === id),
       querySelectorAll: (selector: string) => {
-        if (selector === 'button') return [normal, force, refresh, fetch];
+        if (selector === 'button') return [normal, force, refresh, fetch, ...(showProgress ? [cancel] : [])];
         if (selector === '.branch-item') return [row];
         if (selector.includes(':not')) return [available];
         return [available, protectedBranch];
@@ -116,14 +126,61 @@ it('selection and scroll survive automatic refresh, and controls distinguish loc
   listeners.input({ target: search });
   assert.equal(row.hidden, true);
   assert.equal(all.disabled, true);
+  showProgress = true;
+  windowListeners.message({ data: { type: 'updateBranches', repository: '/repo', content: '<pending>', busy: true } });
+  assert.equal(fetch.disabled, true);
+  assert.equal(cancel.disabled, false);
+  assert.equal(elapsed.textContent, 'Elapsed 2 s');
+  now = 8000; timer?.();
+  assert.equal(elapsed.textContent, 'Elapsed 7 s');
+  listeners.click({ target: cancel });
+  assert.deepEqual(messages.pop(), { type: 'cancelFetch' });
+  assert.equal(cancel.disabled, true);
+  showProgress = false;
+  windowListeners.message({ data: { type: 'updateBranches', repository: '/repo', content: '<cancelled>', busy: false } });
+  assert.equal(timer, undefined);
+  assert.equal(fetch.disabled, false);
+});
+
+it('puts deletion scope and mode before all targets, preserving long batch names in both languages', () => {
+  const names = Array.from({ length: 30 }, (_, index) => `feature/${index}/` + 'long-name-'.repeat(12));
+  for (const chinese of [true, false]) for (const force of [true, false]) {
+    const confirmation = getDeleteConfirmation('/demo/repository', names, force, chinese);
+    assert.ok(confirmation.detail.startsWith(chinese ? '只删除本地分支，不删除远程分支。' : 'Only local branches are deleted. Remote branches are unaffected.'));
+    const risk = chinese ? (force ? '跳过未合并检查' : '尚未合并的分支会保留')
+      : (force ? 'skips the merge check' : 'unmerged branches are kept');
+    assert.ok(confirmation.detail.indexOf(risk) < confirmation.detail.indexOf(names[0]));
+    for (const name of names) assert.ok(confirmation.detail.includes(name));
+    assert.ok(confirmation.detail.includes(chinese ? '工作树占用分支' : 'worktree-occupied'));
+    assert.ok(confirmation.button.includes(chinese ? '本地' : 'local'));
+  }
 });
 
 it('shows commit counts and comparison target, but never invents zero counts without an upstream', () => {
   const tracked = { ...branch, upstream: 'refs/remotes/upstream/server', exists: { local: true, remote: true }, ahead: 3, behind: 2 };
-  assert.ok(getBranchListContent([tracked], true).includes('Ahead 3 · Behind 2'));
+  assert.ok(getBranchListContent([tracked], true).includes('领先 3'));
+  assert.ok(getBranchListContent([tracked], true).includes('落后 2'));
+  assert.ok(getBranchListContent([tracked], false).includes('Ahead 3'));
+  assert.ok(getBranchListContent([tracked], false).includes('Behind 2'));
   assert.ok(getBranchListContent([tracked], true).includes('upstream/server'));
   assert.ok(getBranchListContent([{ ...tracked, ahead: 0, behind: 0 }], false).includes('Up to date'));
   const untracked = getBranchListContent([branch], false);
   assert.ok(untracked.includes('No upstream'));
   assert.equal(untracked.includes('Ahead 0'), false);
+});
+
+it('distinguishes missing local refs, local upstreams and unavailable counts in both languages', () => {
+  const tracked = { ...branch, upstream: 'refs/remotes/upstream/server', exists: { local: true, remote: true } };
+  for (const chinese of [true, false]) {
+    const missing = getBranchListContent([{ ...tracked, exists: { local: true, remote: false } }], chinese);
+    assert.ok(missing.includes(chinese ? '本地未找到上游引用' : 'Upstream ref not found locally'));
+    assert.ok(missing.includes('upstream/server'));
+    assert.ok(!missing.includes(chinese ? '领先 0' : 'Ahead 0'));
+    const local = getBranchListContent([{ ...tracked, upstream: 'refs/heads/main' }], chinese);
+    assert.ok(local.includes(chinese ? '跟踪本地分支' : 'Local upstream'));
+    assert.ok(!local.includes(chinese ? '领先 0' : 'Ahead 0'));
+    const unknown = getBranchListContent([tracked], chinese);
+    assert.ok(unknown.includes(chinese ? '差距暂不可用' : 'Comparison unavailable'));
+    assert.ok(!unknown.includes(chinese ? '已同步' : 'Up to date'));
+  }
 });

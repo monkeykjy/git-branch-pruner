@@ -4,10 +4,136 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { GitService } from '../../services/GitService';
-import { ProcessGitRunner } from '../../services/GitRunner';
+import { GitCommandError, ProcessGitRunner } from '../../services/GitRunner';
+import { Branch } from '../../types';
 import { BranchPrunerViewProvider } from '../../providers/BranchPrunerViewProvider';
 
 suite('Extension integration', () => {
+  test('keeps remote outcome distinct from local reads and switch failures, and recovers after retry', async function () {
+    if (!vscode.workspace.workspaceFolders?.length) { this.skip(); return; }
+    const branch: Branch = { name: 'topic', isLocal: true, exists: { local: true, remote: true },
+      upstream: 'refs/remotes/upstream/server-topic', ahead: 0, behind: 1,
+      isCurrentBranch: false, isMainBranch: false, isWorktreeBranch: false };
+    let outcome: 'failed' | 'cancelled' | 'timeout' | 'success' | 'pending' = 'success';
+    let fetches = 0;
+    let enteredFetch: () => void = () => {};
+    let fetchSignal: AbortSignal | undefined;
+    let localGate: Promise<void> | undefined;
+    let enteredLocal: () => void = () => {};
+    class ScenarioGitService extends GitService {
+      async isGitRepository() { return true; }
+      async getGitDirectories() { return []; }
+      async getBranches() {
+        if (localGate) { enteredLocal(); await localGate; }
+        return [{ ...branch }];
+      }
+      async fetchRemote(_cwd: string, signal?: AbortSignal): Promise<void> {
+        fetches++;
+        branch.behind!++; // A fetch can update some refs before another remote fails.
+        if (outcome === 'pending') {
+          fetchSignal = signal;
+          return new Promise<void>((_resolve, reject) => {
+            const abort = () => reject(new GitCommandError(undefined, '', 'cancelled'));
+            signal?.addEventListener('abort', abort, { once: true });
+            if (signal?.aborted) abort();
+            enteredFetch();
+          });
+        }
+        if (outcome !== 'success') throw new GitCommandError(1, 'sensitive transport detail', outcome);
+      }
+      async switchBranch(): Promise<void> { throw new Error('switch rejected'); }
+    }
+    let receive: (value: unknown) => Promise<void> = async () => {};
+    let latest = '';
+    let busy: boolean | undefined;
+    const rendered: string[] = [];
+    const webview = {
+      html: '', options: {},
+      postMessage: async (message: { content: string; busy: boolean }) => {
+        latest = message.content; rendered.push(latest); busy = message.busy; return true;
+      },
+      onDidReceiveMessage: (callback: typeof receive) => { receive = callback; return new vscode.Disposable(() => {}); },
+    };
+    const provider = new BranchPrunerViewProvider(vscode.Uri.file(__dirname), new ScenarioGitService());
+    const fakeView = { webview, onDidDispose: () => new vscode.Disposable(() => {}),
+      onDidChangeVisibility: () => new vscode.Disposable(() => {}) } as unknown as vscode.WebviewView;
+    const completed = /Last manual fetch completed|本次会话上次手动 fetch 完成/;
+    const partial = /some may have updated|部分引用可能已更新/;
+    try {
+      await provider.resolveWebviewView(fakeView);
+      await receive({ type: 'ready' });
+      assert.equal(fetches, 0);
+      assert.ok(!completed.test(latest));
+      await receive({ type: 'fetch' });
+      assert.ok(completed.test(latest));
+      for (const reason of ['failed', 'cancelled', 'timeout'] as const) {
+        outcome = reason;
+        await receive({ type: 'fetch' });
+        const expected = { failed: /Remote update failed|远端更新失败/, cancelled: /Remote update cancelled|远端更新已取消/,
+          timeout: /Remote update timed out|远端更新超时/ }[reason];
+        assert.ok(expected.test(latest));
+        assert.ok(partial.test(latest));
+        assert.ok(!completed.test(latest));
+        assert.ok(!latest.includes('sensitive transport detail'));
+        assert.ok(latest.includes(`Behind ${branch.behind}`) || latest.includes(`落后 ${branch.behind}`));
+        assert.equal(busy, false);
+        const count = fetches;
+        await receive({ type: 'refresh' });
+        await receive({ type: 'switch', branch: 'topic' });
+        assert.equal(fetches, count);
+        assert.ok(partial.test(latest));
+        assert.ok(/Switch failed|切换失败/.test(latest));
+      }
+      outcome = 'success';
+      await receive({ type: 'fetch' });
+      assert.ok(completed.test(latest));
+      assert.ok(!partial.test(latest));
+      const lastOutcome = latest.match(/Last manual fetch completed[^<]*|本次会话上次手动 fetch 完成[^<]*/)?.[0];
+      branch.behind!++; // Model an external ref update, without claiming a plugin fetch.
+      await receive({ type: 'refresh' });
+      assert.ok(lastOutcome && latest.includes(lastOutcome));
+      outcome = 'pending';
+      const entered = new Promise<void>(resolve => { enteredFetch = resolve; });
+      const pending = receive({ type: 'fetch' });
+      let releaseLocal: () => void = () => {};
+      try {
+        await entered;
+        assert.ok(latest.includes('id="remoteProgress"'));
+        assert.ok(latest.includes('id="cancelFetchBtn"'));
+        assert.ok(latest.includes('upstream/server-topic'));
+        assert.equal(busy, true);
+        const count = fetches;
+        await receive({ type: 'fetch' });
+        assert.equal(fetches, count);
+        localGate = new Promise<void>(resolve => { releaseLocal = resolve; });
+        const readingLocal = new Promise<void>(resolve => { enteredLocal = resolve; });
+        await receive({ type: 'cancelFetch' });
+        assert.equal(fetchSignal?.aborted, true);
+        await readingLocal;
+        assert.ok(/Refreshing local state|正在刷新本地状态/.test(latest));
+        assert.ok(!latest.includes('id="fetchElapsed"'));
+        assert.ok(!latest.includes('id="cancelFetchBtn"'));
+        assert.equal(busy, true);
+        await receive({ type: 'fetch' });
+        assert.equal(fetches, count);
+        releaseLocal();
+        localGate = undefined;
+        await pending;
+        assert.ok(rendered.some(html => /Cancelling fetch|正在取消获取/.test(html)));
+        assert.ok(/Remote update cancelled|远端更新已取消/.test(latest));
+        assert.ok(!latest.includes('id="remoteProgress"'));
+        assert.equal(busy, false);
+        outcome = 'success';
+        await receive({ type: 'fetch' });
+        assert.ok(completed.test(latest));
+        assert.ok(!latest.includes('id="remoteProgress"'));
+      } finally { releaseLocal(); provider.dispose(); await pending; }
+      await provider.resolveWebviewView(fakeView);
+      await receive({ type: 'ready' });
+      assert.ok(!completed.test(latest));
+    } finally { provider.dispose(); }
+  });
+
   test('activates and exposes the branch manager', async () => {
     const extension = vscode.extensions.getExtension('monkeykjy.git-branch-pruner');
     assert.ok(extension);

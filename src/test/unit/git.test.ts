@@ -223,6 +223,25 @@ it('counts upstream commit differences for synced, ahead, behind and diverged br
   assert.deepEqual([behind.ahead, behind.behind], [0, 2]);
 });
 
+it('reports multi-remote fetch failure while retaining refs fetched from the available remote', async () => {
+  const remote = path.join(root, 'available.git');
+  await git(['init', '--bare', '--template=', remote]);
+  await git(['remote', 'add', 'available', remote]);
+  await git(['push', '-u', 'available', 'main']);
+  const producer = path.join(root, 'producer');
+  await git(['clone', '--template=', '--branch', 'main', remote, producer]);
+  await git(['commit', '--allow-empty', '-m', 'remote advancement'], producer);
+  await git(['push'], producer);
+  await git(['remote', 'add', 'unavailable', path.join(root, 'missing.git')]);
+  await assert.rejects(service.fetchRemote(cwd), (error: unknown) =>
+    error instanceof GitCommandError && error.reason === 'failed');
+  const branch = (await service.getBranches(cwd)).find(item => item.name === 'main')!;
+  assert.equal(branch.upstream, 'refs/remotes/available/main');
+  assert.equal(branch.exists.remote, true);
+  assert.equal(branch.behind, 1);
+  assert.equal(branch.ahead, 0);
+});
+
 it('switches a local branch without force or automatic remote branch creation', async () => {
   await git(['branch', 'target']);
   await service.switchBranch(cwd, 'target');

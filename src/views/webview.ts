@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { Branch, DeleteResult, DeleteStatus } from '../types';
+import { Branch, DeleteResult, DeleteStatus, RemoteProgress } from '../types';
 
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -22,7 +22,8 @@ export function deleteStatusText(status: DeleteStatus, chinese: boolean): string
 
 const script = `
 const vscode = acquireVsCodeApi();
-let busy = false;
+let busy = !!(document.getElementById('remoteProgress') || document.getElementById('localProgress'));
+let progressTimer;
 let repository = document.getElementById('content')?.dataset.repository || '';
 const saved = vscode.getState() || {};
 let selection = saved.repository === repository ? saved.selection || [] : [];
@@ -32,7 +33,7 @@ const selected = () => selectable().filter(input => input.checked).map(input => 
 function save() { vscode.setState({ repository, selection: selected(), query, scroll: window.scrollY }); }
 function updateControls() {
   document.querySelectorAll('button').forEach(button => {
-    button.disabled = busy || button.hasAttribute('data-unavailable') ||
+    button.disabled = (busy && button.id !== 'cancelFetchBtn') || button.hasAttribute('data-unavailable') ||
       (button.dataset.delete !== undefined && selected().length === 0);
   });
   document.querySelectorAll('.branch-checkbox').forEach(input => {
@@ -47,6 +48,17 @@ function updateControls() {
     all.indeterminate = count > 0 && count < visible.length;
   }
 }
+function updateProgress() {
+  if (progressTimer !== undefined) { clearInterval(progressTimer); progressTimer = undefined; }
+  const elapsed = document.getElementById('fetchElapsed');
+  if (!elapsed) return;
+  const tick = () => {
+    const seconds = Math.max(0, Math.floor((Date.now() - Number(elapsed.dataset.started)) / 1000));
+    elapsed.textContent = elapsed.dataset.prefix + seconds + elapsed.dataset.suffix;
+  };
+  tick();
+  progressTimer = setInterval(tick, 1000);
+}
 function applyFilter() {
   document.querySelectorAll('.branch-item').forEach(row => {
     row.hidden = !row.dataset.name.toLowerCase().includes(query.toLowerCase());
@@ -58,6 +70,7 @@ function restore() {
   if (search) search.value = query;
   applyFilter();
   updateControls();
+  updateProgress();
 }
 function send(message) {
   if (busy) return;
@@ -67,7 +80,8 @@ function send(message) {
 document.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (!button || button.disabled) return;
-  if (button.id === 'refreshBtn') send({ type: 'refresh' });
+  if (button.id === 'cancelFetchBtn') { button.disabled = true; vscode.postMessage({ type: 'cancelFetch' }); }
+  else if (button.id === 'refreshBtn') send({ type: 'refresh' });
   else if (button.id === 'fetchBtn') send({ type: 'fetch' });
   else if (button.dataset.switch !== undefined) send({ type: 'switch', branch: button.dataset.switch });
   else if (button.dataset.delete !== undefined && selected().length) {
@@ -130,21 +144,42 @@ button.secondary { background: var(--vscode-button-secondaryBackground); color: 
 button:disabled { opacity: 0.6; cursor: not-allowed; }
 button:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 .branch-list { margin: 10px 0; }
-.branch-item { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 8px; margin: 5px 0;
-  background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; }
+.branch-item { padding: 9px 0; border-bottom: 1px solid var(--vscode-panel-border); }
+.branch-header { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.branch-item:hover { background: var(--vscode-list-hoverBackground); }
+.branch-item:has(.branch-checkbox:checked) { background: var(--vscode-list-inactiveSelectionBackground); }
 .branch-item[hidden] { display: none; }
 input[type="search"] { box-sizing: border-box; width: 100%; padding: 6px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
-.comparison { font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
-.branch-item label { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; }
-.branch-name { flex: 1; margin-right: 10px; overflow-wrap: anywhere; min-width: 0; }
+.branch-details { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px;
+  margin: 2px 0 0 22px; font-size: 12px; line-height: 18px; color: var(--vscode-descriptionForeground); }
+.comparison { overflow-wrap: anywhere; min-width: 0; }
+.branch-status { display: inline-flex; flex-wrap: wrap; gap: 0 6px; }
+.commit-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.branch-item label { display: flex; align-items: flex-start; gap: 8px; flex: 1; min-width: 0; line-height: 22px; }
+.branch-checkbox { flex: 0 0 14px; width: 14px; height: 14px; margin: 4px 0; accent-color: var(--vscode-focusBorder); }
+.branch-name { overflow-wrap: anywhere; min-width: 0; }
+.branch-flags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0 6px;
+  max-width: 50%; font-size: 12px; line-height: 22px; color: var(--vscode-descriptionForeground); }
+.branch-flags span { white-space: nowrap; }
+.branch-flags .current { color: var(--vscode-foreground); }
+.branch-item button.secondary { flex-shrink: 0; margin: 0; padding: 0 4px; min-height: 22px; font: inherit;
+  font-size: 12px; color: var(--vscode-textLink-foreground); background: transparent; }
+.branch-item button.secondary:hover { background: var(--vscode-toolbar-hoverBackground); }
+.branch-item button.secondary:active:not(:disabled) { transform: translateY(1px); }
 li { overflow-wrap: anywhere; }
-.badge { padding: 2px 6px; border-radius: 3px; font-size: 12px; margin-right: 8px;
-  background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
-.badge.current { background: var(--vscode-statusBarItem-warningBackground); color: var(--vscode-statusBarItem-warningForeground); }
-.badge.protected { background: var(--vscode-statusBarItem-prominentBackground); color: var(--vscode-statusBarItem-prominentForeground); }
-.disabled { opacity: 0.7; }
 .notice { color: var(--vscode-descriptionForeground); }
 .error { color: var(--vscode-errorForeground); }
+.remote-progress { margin: 12px 0; }
+.progress-heading { display: flex; align-items: center; gap: 8px; line-height: 1.5; }
+.spinner { display: inline-block; flex: 0 0 12px; width: 12px; height: 12px; border: 2px solid var(--vscode-panel-border);
+  border-top-color: var(--vscode-progressBar-background, var(--vscode-focusBorder)); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+.progress-detail { margin: 4px 0; color: var(--vscode-descriptionForeground); font-size: 12px; line-height: 1.5; }
+.progress-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.progress-controls button { margin: 0; }
+.progress-controls button:active:not(:disabled):not(:focus-visible) { transform: translateY(1px); }
+.elapsed { font-size: 12px; color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; }
 .results { border-top: 1px solid var(--vscode-panel-border); margin-top: 16px; }
 </style>
 </head>
@@ -158,38 +193,45 @@ export function getErrorContent(message: string, chinese: boolean): string {
 }
 
 export function getLoadingContent(message: string, chinese: boolean): string {
-  return page(`<p role="status">${escapeHtml(message)}</p>`, chinese);
+  return page(`<p class="progress-heading" role="status"><span class="spinner" aria-hidden="true"></span>${escapeHtml(message)}</p>`, chinese);
 }
 
 export function getBranchListBody(
   branches: Branch[],
   chinese: boolean,
   results: DeleteResult[] = [],
-  notice = ''
+  notice = '',
+  progress?: RemoteProgress,
+  refreshingLocal = false
 ): string {
   const t = (cn: string, en: string) => chinese ? cn : en;
   const rows = branches.map((branch) => {
     const protectedBranch = branch.isMainBranch || branch.isCurrentBranch || branch.isWorktreeBranch;
-    const badges: string[] = [];
-    const protectionBadges = `${branch.isCurrentBranch ? `<span class="badge current">${t('当前', 'Current')}</span>` : ''}
-      ${branch.isMainBranch ? `<span class="badge protected">${t('受保护', 'Protected')}</span>` : ''}`;
-    if (branch.isWorktreeBranch && !branch.isCurrentBranch) badges.push(t('工作树使用中', 'In use by worktree'));
+    const flags = [branch.isCurrentBranch ? `<span class="current">${t('当前', 'Current')}</span>` : '',
+      branch.isMainBranch ? `<span>${t('受保护', 'Protected')}</span>` : '',
+      branch.isWorktreeBranch && !branch.isCurrentBranch ? `<span>${t('工作树使用中', 'In worktree')}</span>` : ''].join('');
+    let status: string;
     if (!branch.upstream) {
-      badges.push(t('未设置上游', 'No upstream'));
+      status = t('未设置上游', 'No upstream');
     } else if (!branch.upstream.startsWith('refs/remotes/')) {
-      badges.push(t('跟踪本地分支', 'Local upstream'));
+      status = t('跟踪本地分支', 'Local upstream');
     } else {
-      if (!branch.exists.remote) badges.push(t('上游引用已消失', 'Upstream ref missing'));
-      else if (branch.ahead === undefined || branch.behind === undefined) badges.push(t('差距暂不可用', 'Comparison unavailable'));
-      else if (branch.ahead === 0 && branch.behind === 0) badges.push(t('已同步', 'Up to date'));
-      else badges.push(`Ahead ${branch.ahead} · Behind ${branch.behind}`);
+      if (!branch.exists.remote) status = t('本地未找到上游引用', 'Upstream ref not found locally');
+      else if (branch.ahead === undefined || branch.behind === undefined) status = t('差距暂不可用', 'Comparison unavailable');
+      else if (branch.ahead === 0 && branch.behind === 0) status = t('已同步', 'Up to date');
+      else status = `<span class="commit-count">${t('领先', 'Ahead')} ${branch.ahead}</span> <span class="commit-count">${t('落后', 'Behind')} ${branch.behind}</span>`;
     }
-    return `<div data-name="${escapeHtml(branch.name)}" class="branch-item ${protectedBranch ? 'disabled' : ''}">
+    return `<div data-name="${escapeHtml(branch.name)}" class="branch-item">
+      <div class="branch-header">
       <label><input type="checkbox" class="branch-checkbox" data-branch="${escapeHtml(branch.name)}"
         ${protectedBranch ? 'data-protected disabled' : ''}><span class="branch-name">${escapeHtml(branch.name)}</span></label>
-      ${protectionBadges}${badges.map((badge) => `<span class="badge">${badge}</span>`).join('')}
-      ${branch.upstream ? `<span class="comparison">↔ ${escapeHtml(branch.upstream.replace(/^refs\/(remotes|heads)\//, ''))}</span>` : ''}
-      <button class="secondary" data-switch="${escapeHtml(branch.name)}" ${branch.isWorktreeBranch || branch.isCurrentBranch ? 'data-unavailable disabled' : ''}>${t('切换', 'Switch')}</button>
+      ${flags ? `<span class="branch-flags">${flags}</span>` : ''}
+      ${!branch.isWorktreeBranch && !branch.isCurrentBranch ? `<button class="secondary" data-switch="${escapeHtml(branch.name)}" aria-label="${escapeHtml(t('切换到 ', 'Switch to ') + branch.name)}">${t('切换', 'Switch')}</button>` : ''}
+      </div>
+      <div class="branch-details">
+        ${branch.upstream ? `<span class="comparison">${escapeHtml(branch.upstream.replace(/^refs\/(remotes|heads)\//, ''))}&nbsp;·</span>` : ''}
+        <span class="branch-status" title="${t('状态依据本地记录，不代表已合并或可安全删除。领先 / 落后是相对所列远端上游各自独有的提交数；本地缺少引用不能证明服务器已删除分支。', 'Status uses local records, not merge status or deletion safety. Ahead / Behind counts commits unique to each side of the listed remote upstream; a missing local ref does not prove server-side deletion.')}">${status}</span>
+      </div>
     </div>`;
   }).join('');
   const summary = results.length ? `<section class="results" aria-live="polite">
@@ -198,14 +240,25 @@ export function getBranchListBody(
   </section>` : '';
   return `
     <p class="description">${t('检查并清理本地 Git 分支。普通删除保留 Git 的未合并保护。', 'Review and clean up local Git branches. Normal deletion preserves Git’s unmerged-branch protection.')}</p>
-    <p class="notice">${t('上游状态来自本地引用，不表示分支已合并或可以安全删除。', 'Upstream status comes from local refs; it does not mean a branch is merged or safe to delete.')}</p>
+    <p class="notice">${t('领先 / 落后按提交数计算，依据本地上游引用，不是远端实时查询。状态不代表已合并或可安全删除。', 'Ahead / Behind counts commits using local upstream refs, not a live remote query. Status does not imply merged or safe to delete.')}</p>
     ${notice ? `<p class="notice" role="status">${escapeHtml(notice)}</p>` : ''}
+    ${progress ? `<section id="remoteProgress" class="remote-progress" role="status">
+      <div class="progress-heading"><span class="spinner" aria-hidden="true"></span><strong>${progress.cancelling
+        ? t('正在取消获取…', 'Cancelling fetch…') : t('正在获取远端状态…', 'Fetching remote status…')}</strong></div>
+      <p class="progress-detail">${progress.cancelling
+        ? t('正在等待 Git 结束，当前列表继续保留。', 'Waiting for Git to stop; the current list stays visible.')
+        : t('当前显示本地引用，获取最长等待 30 秒。可随时取消。', 'Showing local refs. Fetch times out after 30 seconds; you can cancel anytime.')}</p>
+      <div class="progress-controls"><span id="fetchElapsed" class="elapsed" role="timer" aria-live="off"
+        data-started="${progress.startedAt}" data-prefix="${t('已等待 ', 'Elapsed ')}" data-suffix="${t(' 秒', ' s')}"></span>
+        <button id="cancelFetchBtn" class="secondary" ${progress.cancelling ? 'data-unavailable disabled' : ''}>${t('取消获取', 'Cancel fetch')}</button></div>
+    </section>` : ''}
+    ${refreshingLocal ? `<p id="localProgress" class="progress-heading" role="status"><span class="spinner" aria-hidden="true"></span>${t('正在刷新本地状态…', 'Refreshing local state…')}</p>` : ''}
     <div class="actions"><button id="fetchBtn">${t('更新远端状态', 'Update remote status')}</button>
       <button id="refreshBtn" class="secondary">${t('刷新本地', 'Refresh local')}</button></div>
     <input id="search" type="search" aria-label="${t('搜索本地分支', 'Search local branches')}" placeholder="${t('搜索本地分支', 'Search local branches')}">
     ${branches.length ? `
       <label><input id="selectAll" type="checkbox">${t('全选可操作分支', 'Select all available branches')}</label>
-      <div class="branch-list">${rows}</div>
+      <div class="branch-list" aria-busy="${!!progress || refreshingLocal}">${rows}</div>
       <div class="actions">
         <button data-delete="normal" disabled>${t('删除选中', 'Delete selected')}</button>
         <button data-delete="force" class="secondary" disabled>${t('强制删除…', 'Force delete…')}</button>
@@ -213,6 +266,6 @@ export function getBranchListBody(
     ${summary}`;
 }
 
-export function getBranchListContent(branches: Branch[], chinese: boolean, results: DeleteResult[] = [], notice = '', repository = ''): string {
-  return page(getBranchListBody(branches, chinese, results, notice), chinese, true, repository);
+export function getBranchListContent(branches: Branch[], chinese: boolean, results: DeleteResult[] = [], notice = '', repository = '', progress?: RemoteProgress, refreshingLocal = false): string {
+  return page(getBranchListBody(branches, chinese, results, notice, progress, refreshingLocal), chinese, true, repository);
 }
