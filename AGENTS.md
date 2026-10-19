@@ -50,7 +50,7 @@
 - 使用 `pnpm test` 执行业务测试，`pnpm run test:integration` 执行宿主测试；核对用例数量和跳过情况。原生监听应在支持 fs.watch 的环境验证。
 - Webview 交互变更应在 Extension Development Host 中检查加载、错误、空列表、选择与确认流程及中英文显示。
 - 文档类变更检查内容一致性、链接和 diff 即可，不需要新增业务测试。
-- 打包发布前核对 VSIX 包含最新 `dist/extension.js`；当前打包脚本尚未自动构建，详见开发文档。
+- 打包发布前核对 VSIX 包含最新 `dist/extension.js`；`vscode:prepublish` 自动编译并生成生产构建，打包不携带开发依赖，详见开发文档。
 
 ## Code Review Rules
 

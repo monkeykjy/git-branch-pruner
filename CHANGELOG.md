@@ -1,6 +1,8 @@
 # Change Log
 
-## [Unreleased]
+## [0.2.0] - Unreleased
+
+- Build the extension automatically before packaging and exclude development-only files from the VSIX.
 
 - Localize the extension description and local-branch view title for Simplified Chinese, with English defaults. Reorganize both READMEs with language-switching instructions and six screenshots rendered from the current Webview using demo data.
 

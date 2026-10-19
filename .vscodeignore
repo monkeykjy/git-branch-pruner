@@ -14,4 +14,11 @@ vsc-extension-quickstart.md
 **/.vscode-test.*
 AGENTS.md
 docs/**
-scripts/create-demo.js
+scripts/**
+.agents/**
+.codex/**
+.claude/**
+.pnpm-store/**
+pnpm-lock.yaml
+pnpm-workspace.yaml
+.npmrc
