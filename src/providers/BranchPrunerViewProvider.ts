@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { GitService } from '../services/GitService';
 import { GitCommandError } from '../services/GitRunner';
+import { sanitizeGitError } from '../services/gitErrorDetails';
 import { RepositoryWatcher } from '../services/RepositoryWatcher';
 import { Branch, DeleteResult, RemoteProgress, parseWebviewMessage } from '../types';
 import { getDeleteConfirmation } from '../views/deleteConfirmation';
@@ -24,6 +25,7 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
   private results: DeleteResult[] = [];
   private notice = '';
   private remoteNotice = '';
+  private remoteErrorDetails = '';
   private watcherNotice = '';
   private readNotice = '';
   private hasList = false;
@@ -191,6 +193,7 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
       this.readNotice = '';
       this.notice = '';
       this.remoteNotice = '';
+      this.remoteErrorDetails = '';
       this.watcherNotice = '';
       this.fetchController?.abort();
       this.remoteProgress = undefined;
@@ -244,11 +247,11 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
     if (!this.hasList) {
       this.hasList = true;
       this.ready = false;
-      this.view.webview.html = getBranchListContent(this.branches, this.chinese, this.results, notice, this.directory, this.remoteProgress, this.refreshingLocal);
+      this.view.webview.html = getBranchListContent(this.branches, this.chinese, this.results, notice, this.directory, this.remoteProgress, this.refreshingLocal, this.remoteErrorDetails);
     } else if (this.ready) {
       void this.view.webview.postMessage({
         type: 'updateBranches', repository: this.directory, busy: this.busy,
-        content: getBranchListBody(this.branches, this.chinese, this.results, notice, this.remoteProgress, this.refreshingLocal),
+        content: getBranchListBody(this.branches, this.chinese, this.results, notice, this.remoteProgress, this.refreshingLocal, this.remoteErrorDetails),
       });
     }
   }
@@ -270,6 +273,7 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
     this.fetchController = controller;
     this.remoteProgress = { startedAt: started, cancelling: false };
     this.remoteNotice = '';
+    this.remoteErrorDetails = '';
     this.render();
     try {
       await this.gitService.fetchRemote(cwd, controller.signal);
@@ -286,7 +290,16 @@ export class BranchPrunerViewProvider implements vscode.WebviewViewProvider, vsc
         ? this.t('远端更新已取消。', 'Remote update cancelled.')
         : reason === 'timeout'
           ? this.t('远端更新超时。', 'Remote update timed out.')
-          : this.t('远端更新失败，请检查网络、Git 代理或认证。', 'Remote update failed. Check connectivity, Git proxy or authentication.');
+          : this.t('远端更新失败，请查看下方 Git 错误详情。', 'Remote update failed. See Git error details below.');
+      if (reason === 'failed') {
+        const output = sanitizeGitError(error instanceof GitCommandError ? error.stderr : error instanceof Error ? error.message : '');
+        const code = error instanceof GitCommandError && error.code != null
+          ? this.t('退出码：', 'Exit code: ') + sanitizeGitError(String(error.code)) + '\n'
+          : '';
+        this.remoteErrorDetails = code + (output || this.t('Git 未提供错误详情。请在同一仓库的终端运行 git fetch --all --prune 查看原因。',
+          'Git provided no error details. Run git fetch --all --prune in a terminal in this repository to investigate.'));
+        this.log(`remote-update:details ${JSON.stringify(this.remoteErrorDetails)}`);
+      }
       this.remoteNotice += this.t(' 显示本地引用；部分引用可能已更新，不能确认所有远端状态。',
         ' Showing local refs; some may have updated. Not all remote states could be confirmed.');
     } finally {

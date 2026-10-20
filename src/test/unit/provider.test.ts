@@ -69,6 +69,41 @@ class LocalService extends GitService {
   async getBranches(): Promise<Branch[]> { return []; }
 }
 
+for (const chinese of [true, false]) {
+  it(`shows safe Git failure details and retains them until retry (${chinese ? 'zh' : 'en'})`, async () => {
+    const fetching = deferred<void>();
+    let retry = false;
+    class Service extends LocalService {
+      async fetchRemote() {
+        if (retry) return fetching.promise;
+        throw new GitCommandError(128, "fatal: couldn't find remote ref refs/heads/missing\n<script>alert(1)</script>\nhttps://user:secret@example.com/repo?token=private\nAuthorization: Bearer hidden-token");
+      }
+    }
+    const h = harness(new Service(), chinese);
+    try {
+      await h.open();
+      await h.send({ type: 'ready' });
+      await h.send({ type: 'fetch' });
+      assert.match(h.latest.content, /refs\/heads\/missing/);
+      assert.match(h.latest.content, chinese ? /退出码：128/ : /Exit code: 128/);
+      assert.match(h.latest.content, /&lt;script&gt;/);
+      assert.doesNotMatch(h.latest.content, /<script>|secret|private|hidden-token/);
+      const logs = h.channels.flatMap(channel => channel.lines).join('\n');
+      assert.match(logs, /remote-update:details.*refs\/heads\/missing/);
+      assert.doesNotMatch(logs, /secret|private|hidden-token/);
+      await h.send({ type: 'refresh' });
+      assert.match(h.latest.content, /refs\/heads\/missing/);
+      retry = true;
+      const pending = h.send({ type: 'fetch' });
+      assert.doesNotMatch(h.latest.content, /refs\/heads\/missing/);
+      fetching.resolve();
+      await pending;
+      assert.doesNotMatch(h.latest.content, /refs\/heads\/missing/);
+      assert.equal(h.latest.busy, false);
+    } finally { fetching.resolve(); h.provider.dispose(); }
+  });
+}
+
 for (const outcome of ['success', 'failed', 'cancelled', 'timeout'] as const) {
   it(`ends fetch progress before slow local refresh after ${outcome}`, async () => {
     const fetched = deferred<void>();
@@ -104,6 +139,8 @@ for (const outcome of ['success', 'failed', 'cancelled', 'timeout'] as const) {
       assert.ok(!h.latest.content.includes('id="cancelFetchBtn"'), 'finished fetch must not offer cancellation');
       assert.match(h.latest.content, /Refreshing local state|正在刷新本地状态/);
       assert.match(h.latest.content, /Last manual fetch completed|Remote update failed|Remote update timed out|远端更新已取消/);
+      if (outcome === 'failed') assert.match(h.latest.content, /Git provided no error details/);
+      else assert.doesNotMatch(h.latest.content, /class="git-error"/);
       assert.equal(h.latest.busy, true);
       await h.send({ type: 'fetch' });
       await h.send({ type: 'switch', branch: 'topic' });

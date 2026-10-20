@@ -13,7 +13,7 @@ const peer = path.join(root, 'peer');
 const remote = path.join(root, 'remote.git');
 // Optional macOS/Linux fixture: enable with remote.origin.uploadpack in this demo only.
 const slowUploadPack = path.join(root, 'slow-upload-pack.sh');
-fs.writeFileSync(slowUploadPack, '#!/bin/sh\ncase "$1" in 8|35) ;; *) exit 1 ;; esac\nsleep "$1"\nshift\nexec git-upload-pack "$@"\n');
+fs.writeFileSync(slowUploadPack, '#!/bin/sh\ncase "$1" in 8|35|305) ;; *) exit 1 ;; esac\nsleep "$1"\nshift\nexec git-upload-pack "$@"\n');
 const env = { ...process.env };
 for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key];
 Object.assign(env, {

@@ -52,9 +52,11 @@ function updateProgress() {
   if (progressTimer !== undefined) { clearInterval(progressTimer); progressTimer = undefined; }
   const elapsed = document.getElementById('fetchElapsed');
   if (!elapsed) return;
+  const slowNotice = document.getElementById('fetchSlowNotice');
   const tick = () => {
     const seconds = Math.max(0, Math.floor((Date.now() - Number(elapsed.dataset.started)) / 1000));
     elapsed.textContent = elapsed.dataset.prefix + seconds + elapsed.dataset.suffix;
+    if (slowNotice) slowNotice.hidden = seconds < 30;
   };
   tick();
   progressTimer = setInterval(tick, 1000);
@@ -168,6 +170,10 @@ input[type="search"] { box-sizing: border-box; width: 100%; padding: 6px; color:
 .branch-item button.secondary:active:not(:disabled) { transform: translateY(1px); }
 li { overflow-wrap: anywhere; }
 .notice { color: var(--vscode-descriptionForeground); }
+.git-error { margin: 12px 0; overflow-wrap: anywhere; }
+.git-error summary { cursor: pointer; color: var(--vscode-errorForeground); }
+.git-error pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto;
+  user-select: text; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; line-height: 1.5; }
 .error { color: var(--vscode-errorForeground); }
 .remote-progress { margin: 12px 0; }
 .progress-heading { display: flex; align-items: center; gap: 8px; line-height: 1.5; }
@@ -202,7 +208,8 @@ export function getBranchListBody(
   results: DeleteResult[] = [],
   notice = '',
   progress?: RemoteProgress,
-  refreshingLocal = false
+  refreshingLocal = false,
+  remoteErrorDetails = ''
 ): string {
   const t = (cn: string, en: string) => chinese ? cn : en;
   const rows = branches.map((branch) => {
@@ -242,12 +249,14 @@ export function getBranchListBody(
     <p class="description">${t('检查并清理本地 Git 分支。普通删除保留 Git 的未合并保护。', 'Review and clean up local Git branches. Normal deletion preserves Git’s unmerged-branch protection.')}</p>
     <p class="notice">${t('领先 / 落后按提交数计算，依据本地上游引用，不是远端实时查询。状态不代表已合并或可安全删除。', 'Ahead / Behind counts commits using local upstream refs, not a live remote query. Status does not imply merged or safe to delete.')}</p>
     ${notice ? `<p class="notice" role="status">${escapeHtml(notice)}</p>` : ''}
+    ${remoteErrorDetails ? `<details class="git-error" open><summary>${t('Git 错误详情（可选中复制）', 'Git error details (select to copy)')}</summary><pre tabindex="0">${escapeHtml(remoteErrorDetails)}</pre><p class="notice">${t('已隐藏 URL 和常见认证字段；过长内容显示首尾，中间以 […] 标记。', 'URLs and common authentication fields are hidden. Long output shows the beginning and end, separated by […].')}</p></details>` : ''}
     ${progress ? `<section id="remoteProgress" class="remote-progress" role="status">
       <div class="progress-heading"><span class="spinner" aria-hidden="true"></span><strong>${progress.cancelling
         ? t('正在取消获取…', 'Cancelling fetch…') : t('正在获取远端状态…', 'Fetching remote status…')}</strong></div>
       <p class="progress-detail">${progress.cancelling
         ? t('正在等待 Git 结束，当前列表继续保留。', 'Waiting for Git to stop; the current list stays visible.')
-        : t('当前显示本地引用，获取最长等待 30 秒。可随时取消。', 'Showing local refs. Fetch times out after 30 seconds; you can cancel anytime.')}</p>
+        : t('当前显示本地引用，获取最长等待 5 分钟。可随时取消。', 'Showing local refs. Fetch times out after 5 minutes; you can cancel anytime.')}</p>
+      ${!progress.cancelling ? `<p id="fetchSlowNotice" class="progress-detail" hidden>${t('获取时间较长，可继续等待或取消。', 'Fetch is taking longer. You can keep waiting or cancel.')}</p>` : ''}
       <div class="progress-controls"><span id="fetchElapsed" class="elapsed" role="timer" aria-live="off"
         data-started="${progress.startedAt}" data-prefix="${t('已等待 ', 'Elapsed ')}" data-suffix="${t(' 秒', ' s')}"></span>
         <button id="cancelFetchBtn" class="secondary" ${progress.cancelling ? 'data-unavailable disabled' : ''}>${t('取消获取', 'Cancel fetch')}</button></div>
@@ -266,6 +275,6 @@ export function getBranchListBody(
     ${summary}`;
 }
 
-export function getBranchListContent(branches: Branch[], chinese: boolean, results: DeleteResult[] = [], notice = '', repository = '', progress?: RemoteProgress, refreshingLocal = false): string {
-  return page(getBranchListBody(branches, chinese, results, notice, progress, refreshingLocal), chinese, true, repository);
+export function getBranchListContent(branches: Branch[], chinese: boolean, results: DeleteResult[] = [], notice = '', repository = '', progress?: RemoteProgress, refreshingLocal = false, remoteErrorDetails = ''): string {
+  return page(getBranchListBody(branches, chinese, results, notice, progress, refreshingLocal, remoteErrorDetails), chinese, true, repository);
 }

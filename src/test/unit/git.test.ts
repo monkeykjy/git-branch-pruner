@@ -3,11 +3,14 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import * as childProcess from 'node:child_process';
 import { RepositoryWatcher } from '../../services/RepositoryWatcher';
 import { Branch } from '../../types';
 import { GitService } from '../../services/GitService';
 import { GitCommandError, GitRunner, ProcessGitRunner } from '../../services/GitRunner';
+
+const waitForProcess = delay;
 
 let root: string;
 let cwd: string;
@@ -242,6 +245,21 @@ it('reports multi-remote fetch failure while retaining refs fetched from the ava
   assert.equal(branch.ahead, 0);
 });
 
+it('preserves Git exit code and the missing remote ref in fetch errors', async () => {
+  const remote = path.join(root, 'remote.git');
+  await git(['init', '--bare', '--template=', remote]);
+  await git(['remote', 'add', 'origin', remote]);
+  await git(['push', 'origin', 'main']);
+  await git(['config', 'remote.origin.fetch', '+refs/heads/nonexistent:refs/remotes/origin/nonexistent']);
+  await assert.rejects(service.fetchRemote(cwd), (error: unknown) => {
+    assert.ok(error instanceof GitCommandError);
+    assert.equal(error.reason, 'failed');
+    assert.ok(error.code);
+    assert.match(error.stderr, /couldn't find remote ref refs\/heads\/nonexistent/);
+    return true;
+  });
+});
+
 it('switches a local branch without force or automatic remote branch creation', async () => {
   await git(['branch', 'target']);
   await service.switchBranch(cwd, 'target');
@@ -249,6 +267,52 @@ it('switches a local branch without force or automatic remote branch creation', 
   await assert.rejects(service.switchBranch(cwd, 'missing'));
   assert.equal(await exists('missing'), false);
 });
+
+for (const outcome of ['success', 'cancelled', 'timeout'] as const) {
+  it(`keeps a slow fetch alive after 30 seconds and handles ${outcome}`, async (t) => {
+    const pidFile = path.join(root, 'fetch-pid');
+    const releaseFile = path.join(root, 'fetch-release');
+    const script = path.join(root, 'fetch-wait.cjs');
+    await fs.writeFile(script, `const fs = require('fs'); fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => { if (fs.existsSync(${JSON.stringify(releaseFile)})) process.exit(0); }, 10);`);
+    await git(['config', 'alias.wait-fetch', `!"${process.execPath}" "${script}"`]);
+    // Exercise the real process runner with the service's timeout and signal,
+    // replacing only the transport with an inert child in this temporary repository.
+    const slowService = new GitService({ run(args, directory, options) {
+      assert.deepEqual(args, ['fetch', '--all', '--prune']);
+      return runner.run(['wait-fetch'], directory, options);
+    } });
+    const controller = new AbortController();
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let settled = false;
+    const pending = slowService.fetchRemote(cwd, controller.signal).then(
+      () => { settled = true; return undefined; },
+      (error: unknown) => { settled = true; return error; }
+    );
+    try {
+      const deadline = Date.now() + 5000;
+      while (!(await fs.stat(pidFile).catch(() => undefined))) {
+        assert.ok(Date.now() < deadline, 'test transport did not start');
+        await waitForProcess(10);
+      }
+      t.mock.timers.tick(30_000);
+      await waitForProcess(100);
+      assert.equal(settled, false, '30 seconds must not terminate a healthy fetch');
+      t.mock.timers.tick(269_999);
+      await waitForProcess(20);
+      assert.equal(settled, false, 'fetch must remain active before the five-minute deadline');
+      if (outcome === 'success') await fs.writeFile(releaseFile, 'done');
+      else if (outcome === 'cancelled') controller.abort();
+      else t.mock.timers.tick(1);
+      const error = await pending;
+      if (outcome === 'success') assert.equal(error, undefined);
+      else assert.ok(error instanceof GitCommandError && error.reason === outcome);
+    } finally {
+      controller.abort();
+      await pending;
+      t.mock.timers.reset();
+    }
+  });
+}
 
 it('times out and cancels a Git process with its child transport', async () => {
   const childScript = path.join(root, 'slow.cjs');

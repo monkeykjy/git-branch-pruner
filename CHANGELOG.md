@@ -1,5 +1,11 @@
 # Change Log
 
+## [0.2.1] - Unreleased
+
+- Show fetch failure details and exit codes in the sidebar and output channel, hiding URLs and common authentication fields and bounding long output. Preserve details across local refreshes until the next fetch.
+
+- Let slow fetches continue beyond 30 seconds with a waiting notice; retain cancellation and use a five-minute timeout.
+
 ## [0.2.0] - Unreleased
 
 - Build the extension automatically before packaging and exclude development-only files from the VSIX.

@@ -61,6 +61,7 @@ it('selection and scroll survive automatic refresh, and controls distinguish loc
   const content = element({ repository: '/repo' }, 'content');
   const cancel = element({}, 'cancelFetchBtn');
   const elapsed = { ...element({ started: '1000', prefix: 'Elapsed ', suffix: ' s' }, 'fetchElapsed'), textContent: '' };
+  const slowNotice = { ...element({}, 'fetchSlowNotice'), hidden: true };
   let showProgress = false;
   let now = 3000;
   let timer: (() => void) | undefined;
@@ -85,7 +86,7 @@ it('selection and scroll survive automatic refresh, and controls distinguish loc
     },
     document: {
       addEventListener: (name: string, listener: Listener) => { listeners[name] = listener; },
-      getElementById: (id: string) => [refresh, fetch, all, search, content, ...(showProgress ? [elapsed, cancel] : [])].find(item => item.id === id),
+      getElementById: (id: string) => [refresh, fetch, all, search, content, ...(showProgress ? [elapsed, cancel, slowNotice] : [])].find(item => item.id === id),
       querySelectorAll: (selector: string) => {
         if (selector === 'button') return [normal, force, refresh, fetch, ...(showProgress ? [cancel] : [])];
         if (selector === '.branch-item') return [row];
@@ -133,6 +134,16 @@ it('selection and scroll survive automatic refresh, and controls distinguish loc
   assert.equal(elapsed.textContent, 'Elapsed 2 s');
   now = 8000; timer?.();
   assert.equal(elapsed.textContent, 'Elapsed 7 s');
+  now = 30999; timer?.();
+  assert.equal(slowNotice.hidden, true);
+  now = 31000; timer?.();
+  assert.equal(slowNotice.hidden, false);
+  assert.equal(cancel.disabled, false);
+  assert.equal(fetch.disabled, true);
+  assert.equal(available.disabled, true);
+  slowNotice.hidden = true; // Automatic rerender while the same fetch is still running.
+  windowListeners.message({ data: { type: 'updateBranches', repository: '/repo', content: '<still-pending>', busy: true } });
+  assert.equal(slowNotice.hidden, false);
   listeners.click({ target: cancel });
   assert.deepEqual(messages.pop(), { type: 'cancelFetch' });
   assert.equal(cancel.disabled, true);
@@ -140,6 +151,16 @@ it('selection and scroll survive automatic refresh, and controls distinguish loc
   windowListeners.message({ data: { type: 'updateBranches', repository: '/repo', content: '<cancelled>', busy: false } });
   assert.equal(timer, undefined);
   assert.equal(fetch.disabled, false);
+});
+
+it('explains long fetches in both languages without offering continued waiting during cancellation', () => {
+  for (const chinese of [true, false]) {
+    const html = getBranchListContent([branch], chinese, [], '', '', { startedAt: 0, cancelling: false });
+    assert.ok(html.includes(chinese ? '最长等待 5 分钟' : 'times out after 5 minutes'));
+    assert.ok(html.includes(chinese ? '获取时间较长，可继续等待或取消。' : 'Fetch is taking longer. You can keep waiting or cancel.'));
+    const cancelling = getBranchListContent([branch], chinese, [], '', '', { startedAt: 0, cancelling: true });
+    assert.ok(!cancelling.includes('id="fetchSlowNotice"'));
+  }
 });
 
 it('puts deletion scope and mode before all targets, preserving long batch names in both languages', () => {

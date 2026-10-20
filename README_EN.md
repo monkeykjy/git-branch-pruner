@@ -53,9 +53,11 @@ Ahead and Behind count commits against the upstream shown in that row, such as `
 
 <img src="media/screenshots/fetching-en.png" alt="Remote fetch keeps the branch list visible and shows elapsed time and a Cancel fetch button" width="420">
 
-During fetch, you can browse and search the list. Duplicate fetches, switching, selection and deletion are temporarily disabled. The sidebar shows elapsed seconds and **Cancel fetch**, with a 30-second fetch timeout and no duplicate notification popup.
+During fetch, you can browse and search the list. Duplicate fetches, switching, selection and deletion are temporarily disabled. The sidebar shows elapsed seconds and **Cancel fetch**, with no duplicate notification popup. After 30 seconds, a notice offers continued waiting or cancellation; fetch keeps running until it completes, is cancelled or reaches the five-minute timeout.
 
 When fetch ends, its timer and cancel button disappear immediately. **Refreshing local state** appears until the local read completes or fails, then controls are restored. Failure, cancellation and timeout leave the list visible and explain that some refs may have updated without confirming every remote's state.
+
+On failure, the sidebar expands **Git error details**, showing the exit code and original Git error text for selection and copying. The same details are written to the **Git Branch Pruner** output channel. URLs and common authentication fields are hidden; long output retains its beginning and end. Missing error output is explicitly identified instead of treating every failure as a network issue.
 
 The manual fetch timestamp records only successful fetches started by the extension in the current view session. It does not guarantee current server state or track each remote independently. Local refreshes and external fetches do not change it; recreating the view clears it. Remote outcome notices remain until the next manual fetch and survive local refreshes and failed switches.
 

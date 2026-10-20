@@ -26,7 +26,7 @@ export class GitService {
   }
 
   public async fetchRemote(cwd: string, signal?: AbortSignal): Promise<void> {
-    await this.runner.run(['fetch', '--all', '--prune'], cwd, { timeoutMs: 30_000, signal });
+    await this.runner.run(['fetch', '--all', '--prune'], cwd, { timeoutMs: 5 * 60_000, signal });
   }
 
   public async getGitDirectories(cwd: string, options: GitRunOptions = {}): Promise<string[]> {

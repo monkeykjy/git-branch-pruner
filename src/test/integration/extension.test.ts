@@ -39,7 +39,7 @@ suite('Extension integration', () => {
             enteredFetch();
           });
         }
-        if (outcome !== 'success') throw new GitCommandError(1, 'sensitive transport detail', outcome);
+        if (outcome !== 'success') throw new GitCommandError(1, 'fatal: bad object refs/heads/broken\nhttps://user:secret@example.com/repo', outcome);
       }
       async switchBranch(): Promise<void> { throw new Error('switch rejected'); }
     }
@@ -74,7 +74,8 @@ suite('Extension integration', () => {
         assert.ok(expected.test(latest));
         assert.ok(partial.test(latest));
         assert.ok(!completed.test(latest));
-        assert.ok(!latest.includes('sensitive transport detail'));
+        assert.ok(!latest.includes('secret'));
+        assert.equal(latest.includes('fatal: bad object refs/heads/broken'), reason === 'failed');
         assert.ok(latest.includes(`Behind ${branch.behind}`) || latest.includes(`落后 ${branch.behind}`));
         assert.equal(busy, false);
         const count = fetches;
