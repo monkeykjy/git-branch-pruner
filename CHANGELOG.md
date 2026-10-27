@@ -1,6 +1,6 @@
 # Change Log
 
-## [0.2.2] - Unreleased
+## [0.2.2] - 2026-10-27
 
 - Use the Git executable detected by VS Code, including its selected `git.path`, with a two-second deadline and PATH fallback if the API is unavailable.
 - Thanks to [SolaireFR/clean-git](https://github.com/SolaireFR/clean-git/blob/6d0b3875f15815c5f306de770304ec3a1da7579d/src/services/GitService.ts#L49-L80) for the Git path discovery approach; command execution and safety controls remain specific to this project.
