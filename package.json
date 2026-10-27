@@ -2,7 +2,7 @@
   "name": "git-branch-pruner",
   "displayName": "Git Branch Pruner",
   "description": "%extension.description%",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "monkeykjy",
   "engines": {
     "vscode": "^1.80.0"

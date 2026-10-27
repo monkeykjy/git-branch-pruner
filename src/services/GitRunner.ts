@@ -19,15 +19,20 @@ export class GitCommandError extends Error {
 
 /** Uses argument arrays and inherits the user's proxy/authentication configuration. */
 export class ProcessGitRunner implements GitRunner {
-  constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+  constructor(
+    private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly executable: string | ((signal?: AbortSignal) => Promise<string>) = 'git'
+  ) {}
 
-  run(args: string[], cwd?: string, options: GitRunOptions = {}): Promise<GitOutput> {
+  async run(args: string[], cwd?: string, options: GitRunOptions = {}): Promise<GitOutput> {
+    if (options.signal?.aborted) throw new GitCommandError(undefined, '', 'cancelled');
+    const executable = typeof this.executable === 'string' ? this.executable : await this.executable(options.signal);
     return new Promise((resolve, reject) => {
       if (options.signal?.aborted) {
         reject(new GitCommandError(undefined, '', 'cancelled'));
         return;
       }
-      const child = spawn('git', args, {
+      const child = spawn(executable, args, {
         cwd, env: { ...this.env, LC_ALL: 'C', LANG: 'C', GIT_TERMINAL_PROMPT: '0' },
         windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
       });

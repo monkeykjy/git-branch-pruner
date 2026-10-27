@@ -7,8 +7,22 @@ import { GitService } from '../../services/GitService';
 import { GitCommandError, ProcessGitRunner } from '../../services/GitRunner';
 import { Branch } from '../../types';
 import { BranchPrunerViewProvider } from '../../providers/BranchPrunerViewProvider';
+import { createGitPathResolver, GitExtensionApi } from '../../gitPath';
 
 suite('Extension integration', () => {
+  test('uses the built-in Git executable even when the child PATH is empty', async () => {
+    const extension = vscode.extensions.getExtension<GitExtensionApi>('vscode.git');
+    assert.ok(extension, 'Built-in Git extension must be available');
+    const api = await extension!.activate();
+    assert.ok(api.enabled);
+    const logs: string[] = [];
+    const resolve = createGitPathResolver(async () => api, line => logs.push(line));
+    assert.equal(await resolve(), api.getAPI(1).git.path);
+    const runner = new ProcessGitRunner({ ...process.env, PATH: '' }, resolve);
+    assert.match((await runner.run(['--version'])).stdout, /^git version /);
+    assert.deepEqual(logs, ['git-path:source=vscode.git']);
+  });
+
   test('keeps remote outcome distinct from local reads and switch failures, and recovers after retry', async function () {
     if (!vscode.workspace.workspaceFolders?.length) { this.skip(); return; }
     const branch: Branch = { name: 'topic', isLocal: true, exists: { local: true, remote: true },

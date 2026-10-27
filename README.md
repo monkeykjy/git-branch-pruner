@@ -80,7 +80,7 @@
 ## 系统要求与开发
 
 - VS Code 1.80.0 或更高版本。
-- Git 2.40.0 或更高版本，并可在 PATH 中找到。
+- Git 2.40.0 或更高版本。插件优先使用 VS Code 内置 Git 扩展识别的路径（包括其采用的 `git.path` 配置）；API 不可用或获取路径超过 2 秒时，回退到扩展宿主的 PATH。仍需安装 Git，无需额外配置本插件。
 - 开发和测试使用 Node.js 22、pnpm，详见 [开发说明](https://github.com/monkeykjy/git-branch-pruner/blob/main/docs/002.DEVELOPMENT.md)。
 - `pnpm run demo` 在项目的 `../tmp/demo/run-XXXXXX/` 下生成独立测试环境，步骤见 [手动验收清单](https://github.com/monkeykjy/git-branch-pruner/blob/main/docs/005.MANUAL_TESTS.md)。
 

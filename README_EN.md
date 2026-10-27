@@ -80,7 +80,7 @@ Run **Configure Display Language** from the Command Palette, select `en` or `zh-
 ## Requirements and Development
 
 - VS Code 1.80.0 or later.
-- Git 2.40.0 or later, available on PATH.
+- Git 2.40.0 or later. The extension prefers the executable identified by VS Code’s built-in Git extension, including its selected `git.path` configuration. If the API is unavailable or path resolution exceeds two seconds, it falls back to the extension host’s PATH. Git must still be installed; no additional extension configuration is needed.
 - Development and tests use Node.js 22 and pnpm. See the [development guide](https://github.com/monkeykjy/git-branch-pruner/blob/main/docs/002.DEVELOPMENT.md).
 - Run `pnpm run demo` to create an isolated fixture under the project's `../tmp/demo/run-XXXXXX/`, then follow the [manual acceptance checklist](https://github.com/monkeykjy/git-branch-pruner/blob/main/docs/005.MANUAL_TESTS.md).
 

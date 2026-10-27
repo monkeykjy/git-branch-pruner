@@ -1,12 +1,17 @@
 # Change Log
 
-## [0.2.1] - Unreleased
+## [0.2.2] - Unreleased
+
+- Use the Git executable detected by VS Code, including its selected `git.path`, with a two-second deadline and PATH fallback if the API is unavailable.
+- Thanks to [SolaireFR/clean-git](https://github.com/SolaireFR/clean-git/blob/6d0b3875f15815c5f306de770304ec3a1da7579d/src/services/GitService.ts#L49-L80) for the Git path discovery approach; command execution and safety controls remain specific to this project.
+
+## [0.2.1] - 2026-10-20
 
 - Show fetch failure details and exit codes in the sidebar and output channel, hiding URLs and common authentication fields and bounding long output. Preserve details across local refreshes until the next fetch.
 
 - Let slow fetches continue beyond 30 seconds with a waiting notice; retain cancellation and use a five-minute timeout.
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-10-19
 
 - Build the extension automatically before packaging and exclude development-only files from the VSIX.
 
